@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>نمایشگر DFF و TXD</title>
+<style>
+:root{--bg:#eef0f3;--fg:#14181f;--bar:#fff;--bd:#cfd4dc;--ac:#0b6e4f;--acf:#fff;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#101419;--fg:#e6e9ee;--bar:#1a2028;--bd:#2f3a47;--ac:#3ddc97;--acf:#06281b;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#101419;--fg:#e6e9ee;--bar:#1a2028;--bd:#2f3a47;--ac:#3ddc97;--acf:#06281b;color-scheme:dark}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--fg);font-family:Vazirmatn,Tahoma,system-ui,sans-serif;display:flex;flex-direction:column;overflow:hidden}
+#bar{background:var(--bar);border-bottom:1px solid var(--bd);padding:8px 10px;display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center}
+#pick{background:var(--ac);color:var(--acf);border-radius:8px;padding:8px 14px;font-weight:700;cursor:pointer;font-size:15px}
+#pick{position:relative;overflow:hidden}#pick input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;font-size:0}
+#sw{display:flex;gap:6px;align-items:center}#bc{width:34px;height:28px;padding:0;border:1px solid var(--bd);border-radius:6px;background:none}
+label.c{display:flex;gap:5px;align-items:center;font-size:14px;cursor:pointer}
+#st{font-size:13px;opacity:.8;flex:1 1 100%}
+#v{flex:1;position:relative;min-height:0}
+#v canvas{display:block;width:100%;height:100%;touch-action:none}
+#hint{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:24px;line-height:1.9;pointer-events:none;opacity:.7}
+#th{display:flex;gap:6px;overflow-x:auto;padding:6px 10px;border-top:1px solid var(--bd);background:var(--bar)}
+#th:empty{display:none}
+#th figure{margin:0;text-align:center;font-size:10px;flex:0 0 auto}
+#th canvas{width:56px;height:56px;border:1px solid var(--bd);border-radius:4px;display:block;background:repeating-conic-gradient(#8885 0 25%,#0000 0 50%) 0 0/10px 10px}
+</style>
+</head>
+<body>
+<div id="bar">
+ <label id="pick">انتخاب فایل (DFF و TXD)<input id="f" type="file" multiple></label>
+ <label class="c"><input id="w" type="checkbox">وایرفریم</label>
+ <label class="c"><input id="tx" type="checkbox" checked>تکسچر</label>
+ <div id="sw"><input id="bc" type="color" value="#1b2a41" title="رنگ پس‌زمینه"></div>
+ <div id="st">هر دو فایل را با هم انتخاب کن یا روی صفحه رها کن.</div>
+</div>
+<div id="v"><div id="hint">فایل .dff (مدل) و .txd (تکسچر) را اینجا بینداز<br>با انگشت بچرخان، با دو انگشت زوم کن</div></div>
+<div id="th"></div>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+const hdr=(d,o)=>({t:d.getUint32(o,true),s:d.getUint32(o+4,true),v:d.getUint32(o+8,true),o:o+12});
+const kids=(d,o,e)=>{const a=[];while(o+12<=e){const h=hdr(d,o);a.push(h);o=h.o+h.s}return a};
+const lv=v=>v&0xFFFF0000?(((v>>>14)&0x3FF00)+0x30000)|((v>>>16)&0x3F):v<<8;
+const str=(d,p,n)=>{let r='';for(let i=0;i<n;i++){const c=d.getUint8(p+i);if(!c)break;r+=String.fromCharCode(c)}return r};
+const f32=(d,p,n)=>{const a=new Float32Array(n);for(let i=0;i<n;i++)a[i]=d.getFloat32(p+i*4,true);return a};
+
+function geo(d,g){
+ const k=kids(d,g.o,g.o+g.s);let p=k[0].o;
+ const fl=d.getUint32(p,true),nt=d.getUint32(p+4,true),nv=d.getUint32(p+8,true);p+=16;
+ if(lv(g.v)<0x34000)p+=12;
+ if(fl&8)p+=nv*4;
+ const nu=((fl>>>16)&255)||((fl&4)?1:(fl&128)?2:0);
+ let uv=null;
+ for(let u=0;u<nu;u++){const a=f32(d,p,nv*2);p+=nv*8;if(!u){for(let i=1;i<a.length;i+=2)a[i]=1-a[i];uv=a}}
+ const tri=[],mid=[];
+ for(let i=0;i<nt;i++){tri.push(d.getUint16(p+2,true),d.getUint16(p,true),d.getUint16(p+6,true));mid.push(d.getUint16(p+4,true));p+=8}
+ p+=16;const hv=d.getUint32(p,true),hn=d.getUint32(p+4,true);p+=8;
+ const pos=hv?f32(d,p,nv*3):new Float32Array(nv*3);if(hv)p+=nv*12;
+ const nor=hn?f32(d,p,nv*3):null;
+ const mats=[],ml=k.find(x=>x.t==8);
+ if(ml)for(const m of kids(d,ml.o,ml.o+ml.s).slice(1)){
+  if(m.t!=7)continue;
+  const mm=kids(d,m.o,m.o+m.s),q=mm[0].o,o={col:[d.getUint8(q+4),d.getUint8(q+5),d.getUint8(q+6)]};
+  const tx=mm.find(x=>x.t==6);
+  if(tx){const tk=kids(d,tx.o,tx.o+tx.s);o.tex=str(d,tk[1].o,tk[1].s)}
+  mats.push(o)}
+ return{pos,nor,uv,tri,mid,mats}
+}
+
+function parseDFF(buf){
+ const d=new DataView(buf),r=hdr(d,0);
+ if(r.t!=0x10)throw Error('این فایل DFF معتبر نیست');
+ const frames=[],geoms=[],atoms=[];
+ for(const c of kids(d,r.o,r.o+r.s)){
+  const k=kids(d,c.o,c.o+c.s);
+  if(c.t==0x0E){let p=k[0].o;const n=d.getUint32(p,true);p+=4;
+   for(let i=0;i<n;i++){frames.push({m:f32(d,p,12),par:d.getInt32(p+48,true)});p+=56}}
+  else if(c.t==0x1A){for(const g of k.slice(1))if(g.t==0x0F)geoms.push(geo(d,g))}
+  else if(c.t==0x14){atoms.push({f:d.getUint32(k[0].o,true),g:d.getUint32(k[0].o+4,true)})}
+ }
+ return{frames,geoms,atoms}
+}
+
+function dxt(d,p,w,h,t){
+ const out=new Uint8Array(w*h*4),bs=t==1?8:16,al=new Uint8Array(16);
+ const rgb=c=>[(c>>11&31)*255/31|0,(c>>5&63)*255/63|0,(c&31)*255/31|0];
+ for(let by=0;by<h;by+=4)for(let bx=0;bx<w;bx+=4){
+  al.fill(255);
+  if(t==3)for(let i=0;i<16;i++){const b=d.getUint8(p+(i>>1));al[i]=((i&1)?b>>4:b&15)*17}
+  else if(t==5){
+   const a0=d.getUint8(p),a1=d.getUint8(p+1),pl=[a0,a1];
+   if(a0>a1)for(let i=1;i<7;i++)pl.push(((7-i)*a0+i*a1)/7|0);
+   else{for(let i=1;i<5;i++)pl.push(((5-i)*a0+i*a1)/5|0);pl.push(0,255)}
+   const v=[0,0];for(let j=0;j<2;j++){const q=p+2+j*3;v[j]=d.getUint8(q)|d.getUint8(q+1)<<8|d.getUint8(q+2)<<16}
+   for(let i=0;i<16;i++)al[i]=pl[(v[i>>3]>>((i&7)*3))&7]}
+  const q=p+(t==1?0:8),c0=d.getUint16(q,true),c1=d.getUint16(q+2,true),ix=d.getUint32(q+4,true);
+  const A=rgb(c0),B=rgb(c1),cl=[A,B];
+  if(c0>c1)cl.push(A.map((x,i)=>(2*x+B[i])/3|0),A.map((x,i)=>(x+2*B[i])/3|0));
+  else cl.push(A.map((x,i)=>(x+B[i])/2|0),[0,0,0]);
+  for(let i=0;i<16;i++){
+   const px=bx+(i&3),py=by+(i>>2);if(px>=w||py>=h)continue;
+   const k=(ix>>>(2*i))&3,c=cl[k],o=(py*w+px)*4;
+   out[o]=c[0];out[o+1]=c[1];out[o+2]=c[2];
+   out[o+3]=(t==1&&c0<=c1&&k==3)?0:al[i]}
+  p+=bs}
+ return out
+}
+
+function parseTXD(buf){
+ const d=new DataView(buf),r=hdr(d,0),res=[];let skip=0;
+ if(r.t!=0x16)throw Error('این فایل TXD معتبر نیست');
+ for(const c of kids(d,r.o,r.o+r.s)){
+  if(c.t!=0x15)continue;
+  const p=kids(d,c.o,c.o+c.s)[0].o,pl=d.getUint32(p,true);
+  if(pl!=8&&pl!=9){skip++;continue}
+  const nm=str(d,p+8,32),rf=d.getUint32(p+72,true),w=d.getUint16(p+80,true),h=d.getUint16(p+82,true),dp=d.getUint8(p+84);
+  const t=pl==9?({0x31545844:1,0x33545844:3,0x35545844:5}[d.getUint32(p+76,true)]||0):({1:1,2:3,3:3,4:5,5:5}[d.getUint8(p+87)]||0);
+  let q=p+88,px;
+  if(t){px=dxt(d,q+4,w,h,t)}
+  else{
+   px=new Uint8Array(w*h*4);let pal;
+   const p8=rf&0x2000,p4=rf&0x4000;
+   if(p8||p4){const n=(p8?256:32)*4;pal=new Uint8Array(buf,q,n);q+=n}
+   q+=4;const f=rf&0xF00;
+   for(let i=0;i<w*h;i++){
+    let R,G,B,A=255;
+    if(pal){const b=p8?d.getUint8(q+i):(i&1?d.getUint8(q+(i>>1))>>4:d.getUint8(q+(i>>1))&15);R=pal[b*4];G=pal[b*4+1];B=pal[b*4+2];A=pal[b*4+3]}
+    else if(dp==32){B=d.getUint8(q+i*4);G=d.getUint8(q+i*4+1);R=d.getUint8(q+i*4+2);A=f==0x600?255:d.getUint8(q+i*4+3)}
+    else if(dp==16){const v=d.getUint16(q+i*2,true);
+     if(f==0x100){A=(v>>15)*255;R=(v>>10&31)*255/31;G=(v>>5&31)*255/31;B=(v&31)*255/31}
+     else if(f==0x300){A=(v>>12&15)*17;R=(v>>8&15)*17;G=(v>>4&15)*17;B=(v&15)*17}
+     else if(f==0x700){R=(v>>10&31)*255/31;G=(v>>5&31)*255/31;B=(v&31)*255/31}
+     else{R=(v>>11&31)*255/31;G=(v>>5&63)*255/63;B=(v&31)*255/31}}
+    else{R=G=B=128}
+    px.set([R,G,B,A],i*4)}
+  }
+  res.push({n:nm.toLowerCase(),w,h,px})}
+ return{res,skip}
+}
+
+// ---- 3D ----
+const box=$('v'),R=new THREE.WebGLRenderer({antialias:true,alpha:true});
+box.appendChild(R.domElement);R.setPixelRatio(Math.min(devicePixelRatio,2));
+const S=new THREE.Scene(),C=new THREE.PerspectiveCamera(50,1,.01,5000);
+S.add(new THREE.HemisphereLight(0xffffff,0x666677,1.1));
+const dl=new THREE.DirectionalLight(0xffffff,.8);dl.position.set(3,5,4);S.add(dl);
+const O=new THREE.OrbitControls(C,R.domElement);O.enableDamping=true;
+new ResizeObserver(()=>{const w=box.clientWidth,h=box.clientHeight;R.setSize(w,h,false);C.aspect=w/h;C.updateProjectionMatrix()}).observe(box);
+(function loop(){requestAnimationFrame(loop);O.update();R.render(S,C)})();
+
+let dff=null,texs={},model=null,fit=true;
+function build(){
+ if(model){S.remove(model);model.traverse(o=>{if(o.geometry)o.geometry.dispose()});model=null}
+ if(!dff)return;
+ const wire=$('w').checked,useT=$('tx').checked,g=new THREE.Group(),W={};
+ const wm=i=>{if(W[i])return W[i];const f=dff.frames[i],m=f.m;
+  const L=new THREE.Matrix4().set(m[0],m[3],m[6],m[9],m[1],m[4],m[7],m[10],m[2],m[5],m[8],m[11],0,0,0,1);
+  return W[i]=(f.par>=0&&f.par!==i)?wm(f.par).clone().multiply(L):L};
+ let tv=0,tt=0;
+ for(const a of dff.atoms){
+  const gm=dff.geoms[a.g];if(!gm)continue;
+  const M=dff.frames[a.f]?wm(a.f):new THREE.Matrix4();
+  const by={};gm.mid.forEach((m,i)=>(by[m]||(by[m]=[])).push(gm.tri[i*3],gm.tri[i*3+1],gm.tri[i*3+2]));
+  tv+=gm.pos.length/3;tt+=gm.mid.length;
+  for(const id in by){
+   const bg=new THREE.BufferGeometry();
+   bg.setAttribute('position',new THREE.BufferAttribute(gm.pos,3));
+   if(gm.uv)bg.setAttribute('uv',new THREE.BufferAttribute(gm.uv,2));
+   bg.setIndex(by[id]);
+   if(gm.nor)bg.setAttribute('normal',new THREE.BufferAttribute(gm.nor,3));else bg.computeVertexNormals();
+   const mt=gm.mats[id]||{},tx=useT&&mt.tex?texs[mt.tex.toLowerCase()]:null;
+   const col=tx?new THREE.Color(1,1,1):new THREE.Color((mt.col?mt.col[0]:200)/255,(mt.col?mt.col[1]:200)/255,(mt.col?mt.col[2]:200)/255);
+   const m=new THREE.Mesh(bg,new THREE.MeshLambertMaterial({color:col,map:tx||null,side:THREE.DoubleSide,transparent:!!(tx&&tx.userData.a),alphaTest:tx?.05:0,wireframe:wire}));
+   m.matrixAutoUpdate=false;m.matrix.copy(M);g.add(m)}
+ }
+ g.rotation.x=-Math.PI/2;S.add(g);model=g;
+ if(fit){fit=false;
+  const bb=new THREE.Box3().setFromObject(g),sz=bb.getSize(new THREE.Vector3()).length()||1,c=bb.getCenter(new THREE.Vector3());
+  C.position.copy(c).add(new THREE.Vector3(1,.7,1).normalize().multiplyScalar(sz*1.1));
+  O.target.copy(c);C.near=sz/1000;C.far=sz*100;C.updateProjectionMatrix();O.update()}
+ $('hint').style.display='none';
+ $('st').textContent=`رأس: ${tv|0} | مثلث: ${tt} | تکسچر: ${Object.keys(texs).length}`;
+}
+
+function addTex(list){
+ const th=$('th');
+ for(const t of list){
+  const cv=document.createElement('canvas');cv.width=t.w;cv.height=t.h;
+  cv.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(t.px.buffer),t.w,t.h),0,0);
+  const tx=new THREE.CanvasTexture(cv);tx.wrapS=tx.wrapT=THREE.RepeatWrapping;
+  tx.userData.a=t.px.some((v,i)=>i%4==3&&v<250);
+  texs[t.n]=tx;
+  const fg=document.createElement('figure'),c2=document.createElement('canvas');
+  c2.width=c2.height=56;c2.getContext('2d').drawImage(cv,0,0,56,56);
+  fg.append(c2,t.n);th.append(fg)}
+}
+
+async function load(files){
+ let msg='';
+ for(const f of files){
+  const ext=f.name.split('.').pop().toLowerCase();
+  try{
+   const b=await f.arrayBuffer();
+   if(ext=='dff'){dff=parseDFF(b);fit=true}
+   else if(ext=='txd'){const r=parseTXD(b);addTex(r.res);if(r.skip)msg+=` (${r.skip} تکسچر فرمت PS2/موبایل پشتیبانی نشد)`;if(!r.res.length&&r.skip)msg+=' '}
+   else msg+=` ${f.name}: فرمت ناشناخته.`
+  }catch(e){$('st').textContent=`خطا در ${f.name}: ${e.message}`;console.error(e);return}
+ }
+ build();if(msg)$('st').textContent+=msg;
+}
+const cols=['#1b2a41','#000000','#2d2d2d','#8a8f98','#f2f2f2','#0b6e4f','#7a1f3d','#c8553d','#2a6f97','#5b3a8e'];
+function setBg(c){$('v').style.background=c;$('bc').value=c;const n=parseInt(c.slice(1),16),l=(n>>16)*.3+((n>>8)&255)*.59+(n&255)*.11;$('hint').style.color=l>140?'#111':'#fff';try{localStorage.setItem('bg',c)}catch(e){}}
+cols.forEach(c=>{const b=document.createElement('button');b.style.cssText='width:24px;height:24px;border-radius:50%;border:2px solid var(--bd);padding:0;background:'+c;b.onclick=()=>setBg(c);$('sw').append(b)});
+$('bc').oninput=e=>setBg(e.target.value);
+let sb='#1b2a41';try{sb=localStorage.getItem('bg')||sb}catch(e){}setBg(sb);
+$('f').onchange=e=>load([...e.target.files]);
+$('w').onchange=$('tx').onchange=build;
+addEventListener('dragover',e=>e.preventDefault());
+addEventListener('drop',e=>{e.preventDefault();load([...e.dataTransfer.files])});
+</script>
+</body>
+</html>
